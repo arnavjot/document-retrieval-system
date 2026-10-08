@@ -126,12 +126,13 @@ def _make_generator():
     from langchain_google_genai import ChatGoogleGenerativeAI
     from agents.prompt_templates import RAG_PROMPT_TEMPLATE
     from agents.rag_agent import CHAT_MODEL
+    from services.embeddings import GEMINI_TRANSPORT
 
     key = os.getenv("GEMINI_API_KEY")
     if not key:
         raise RuntimeError("GEMINI_API_KEY not set")
     llm = ChatGoogleGenerativeAI(  # type: ignore[call-arg]
-        model=CHAT_MODEL, temperature=0.0, google_api_key=key
+        model=CHAT_MODEL, temperature=0.0, google_api_key=key, transport=GEMINI_TRANSPORT
     )
 
     def _gen(question, contexts):

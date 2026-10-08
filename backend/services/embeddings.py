@@ -12,6 +12,9 @@ import os
 
 LOCAL_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_GEMINI_MODEL = "models/gemini-embedding-001"
+# REST, not the SDK's default gRPC: Google's newer "AQ." auth keys are rejected
+# over gRPC with 401 ACCESS_TOKEN_TYPE_UNSUPPORTED, and REST accepts both kinds.
+GEMINI_TRANSPORT = "rest"
 
 
 class GeminiEmbeddings(GoogleGenerativeAIEmbeddings):
@@ -42,5 +45,5 @@ def load_embeddings() -> Tuple[Any, str]:
         )
         return embeddings, LOCAL_MODEL
     return GeminiEmbeddings(  # type: ignore[call-arg]
-        model=model, google_api_key=os.getenv("GEMINI_API_KEY")
+        model=model, google_api_key=os.getenv("GEMINI_API_KEY"), transport=GEMINI_TRANSPORT
     ), model

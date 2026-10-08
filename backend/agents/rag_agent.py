@@ -23,6 +23,7 @@ def _patched_retry_decorator():
 _gcm._create_retry_decorator = _patched_retry_decorator
 
 from services.vectorstore import VectorStoreService
+from services.embeddings import GEMINI_TRANSPORT
 from agents.prompt_templates import RAG_PROMPT_TEMPLATE, CONDENSE_QUESTION_TEMPLATE
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,8 @@ class RAGAgent:
         self.llm = ChatGoogleGenerativeAI(  # type: ignore[call-arg]
             model=CHAT_MODEL,
             temperature=0.3,
-            google_api_key=os.getenv("GEMINI_API_KEY")
+            google_api_key=os.getenv("GEMINI_API_KEY"),
+            transport=GEMINI_TRANSPORT,
         )
         # Injected by the app so the agent reads the same store the upload path
         # writes to. Constructing one here is a fallback for standalone use.
