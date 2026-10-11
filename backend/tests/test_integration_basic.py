@@ -268,3 +268,44 @@ def test_health_reports_the_embedding_model():
     from services.embeddings import LOCAL_MODEL
     services = client.get("/api/health").json()["services"]
     assert services["embedding_model"] == LOCAL_MODEL  # conftest picks the local model
+
+
+def test_gemini_embeddings_batch_and_wait_out_rate_limits(monkeypatch):
+    """The free tier allows 100 embedding requests a minute: batches stay under
+    it, and a 429 waits the delay Google names, then retries."""
+    import google.generativeai as genai
+    from google.api_core.exceptions import ResourceExhausted
+    import services.embeddings as emb
+    calls, sleeps = [], []
+    def fake_embed(**kw):
+        calls.append(len(kw["content"]))
+        if len(calls) == 2:
+            raise ResourceExhausted("Quota exceeded. Please retry in 12.5s.")
+        return {"embedding": [[0.1]] * len(kw["content"])}
+    monkeypatch.setattr(genai, "embed_content", fake_embed)
+    monkeypatch.setattr(emb.time, "sleep", sleeps.append)
+
+    vectors = emb.GeminiEmbeddings(model="models/gemini-embedding-001", google_api_key="test-key").embed_documents(["t"] * 200)
+    assert len(vectors) == 200
+    assert calls == [90, 90, 90, 20]  # second batch hit the limit and was retried
+    assert sleeps == [13.5]
+
+
+def test_chunking_uses_the_local_model_when_indexing_with_gemini(monkeypatch):
+    """Chunking embeds every sentence; with Gemini that is hundreds of requests per
+    PDF, so the local model finds topic shifts and Gemini indexes the chunks."""
+    import langchain_community.embeddings as lce
+    import services.embeddings as emb
+    monkeypatch.setattr(emb, "_chunking_model", None)
+
+    class FakeLocal:
+        def __init__(self, **kw): pass
+        def embed_documents(self, texts): return [[1.0]] * len(texts)
+    monkeypatch.setattr(lce, "HuggingFaceEmbeddings", FakeLocal)
+    gemini = emb.GeminiEmbeddings(model="models/gemini-embedding-001", google_api_key="test-key")
+    def no_gemini(self, texts):
+        raise AssertionError("Gemini used for chunking")
+    monkeypatch.setattr(emb.GeminiEmbeddings, "embed_documents", no_gemini)
+    assert emb.chunking_embeddings(gemini).embed_documents(["a", "b"]) == [[1.0], [1.0]]
+    other = object()
+    assert emb.chunking_embeddings(other) is other  # the local index chunks with itself

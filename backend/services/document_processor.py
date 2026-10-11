@@ -7,6 +7,7 @@ from typing import List, Any
 from pypdf import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
+from services.embeddings import chunking_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +103,9 @@ class SemanticChunker:
 
 class DocumentProcessor:
     def __init__(self, embeddings: Any):
-        # The vector store's embeddings, so chunking and indexing share one model.
-        self.text_splitter = SemanticChunker(embeddings)
+        # Sentences are compared with the local model when indexing uses Gemini
+        # (see chunking_embeddings); otherwise with the index's own model.
+        self.text_splitter = SemanticChunker(chunking_embeddings(embeddings))
 
     def process_pdf(self, file_path: str) -> List[Document]:
         """Process a PDF file and return semantically-chunked document pieces."""
