@@ -309,3 +309,46 @@ def test_chunking_uses_the_local_model_when_indexing_with_gemini(monkeypatch):
     assert emb.chunking_embeddings(gemini).embed_documents(["a", "b"]) == [[1.0], [1.0]]
     other = object()
     assert emb.chunking_embeddings(other) is other  # the local index chunks with itself
+
+
+# --- upload progress --------------------------------------------------------
+
+def test_upload_reports_its_progress():
+    """The progress bar polls this while the upload is chunked and indexed."""
+    response = client.post("/api/upload", files={"file": ("progress.pdf", make_pdf("Progress is reported page by page."), "application/pdf")})
+    assert response.status_code == 200
+    progress = client.get("/api/upload/progress").json()
+    assert progress["active"] is False
+    assert progress["filename"] == "progress.pdf"
+    assert progress["stage"] == "indexing"
+    assert progress["done"] == progress["total"] == response.json()["chunks"]
+
+
+def test_failed_indexing_removes_the_batches_already_added(monkeypatch):
+    """Chunks are indexed in batches for progress; a failure part-way must not
+    leave half a document searchable."""
+    import services.vectorstore as vs
+    from langchain.schema import Document
+
+    class FakeChroma:
+        def __init__(self):
+            self.calls, self.deleted = 0, []
+        def get(self, **kw):
+            return {"ids": []}
+        def add_documents(self, docs):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("quota")
+            return [f"id{self.calls}"]
+        def delete(self, ids):
+            self.deleted += ids
+
+    fake = FakeChroma()
+    service = vs.VectorStoreService.__new__(vs.VectorStoreService)
+    service.vectorstore = fake
+    monkeypatch.setattr(vs, "EMBED_BATCH", 1)
+    seen = []
+    with pytest.raises(RuntimeError):
+        service.add_documents([Document(page_content=t) for t in "abc"], "x.pdf", on_progress=lambda d, t: seen.append((d, t)))
+    assert seen == [(1, 3)]
+    assert fake.deleted == ["id1"]

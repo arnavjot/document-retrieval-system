@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from collections import deque
 import os
 import shutil
@@ -23,6 +23,7 @@ from security.input_validator import InputValidator
 from security.content_filter import ContentFilter
 from services.document_processor import DocumentProcessor
 from services.vectorstore import VectorStoreService
+from services.embeddings import rate_limit_wait_remaining
 
 app = FastAPI(title="Document Retrieval System", version="1.0.0")
 
@@ -57,6 +58,9 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 # event loop. Changes to one document's file + chunks must not interleave.
 # ponytail: one lock for all uploads/deletes; per-filename locks if uploads get busy.
 index_lock = threading.Lock()
+# What the upload in progress is doing, for the progress bar. One upload runs at
+# a time (index_lock), so one record is enough.
+upload_progress: Dict[str, Any] = {"active": False}
 
 
 def pdf_files() -> List[Path]:
@@ -168,14 +172,22 @@ def upload_document(file: UploadFile = File(...)):
         # uploaded, and a failed re-upload leaves the previous version intact.
         partial = resolved.with_name(safe_name + ".part")
         with index_lock:
+            upload_progress.clear()
+            upload_progress.update(active=True, filename=safe_name, stage="reading", done=0, total=0)
             try:
                 with open(partial, "wb") as buffer:
                     shutil.copyfileobj(file.file, buffer)
-                documents = document_processor.process_pdf(str(partial))
-                vectorstore_service.add_documents(documents, safe_name)
+                documents = document_processor.process_pdf(
+                    str(partial),
+                    on_page=lambda done, total: upload_progress.update(stage="chunking", done=done, total=total))
+                upload_progress.update(stage="indexing", done=0, total=len(documents))
+                vectorstore_service.add_documents(
+                    documents, safe_name,
+                    on_progress=lambda done, total: upload_progress.update(done=done, total=total))
                 os.replace(partial, resolved)
             finally:
                 partial.unlink(missing_ok=True)
+                upload_progress["active"] = False
 
         return {
             "message": "Document uploaded and processed successfully",
@@ -188,6 +200,15 @@ def upload_document(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
+
+@app.get("/api/upload/progress")
+def get_upload_progress():
+    """Stage of the upload in progress: reading, chunking (pages) or indexing
+    (chunks), plus how long a Gemini rate-limit wait still has to run."""
+    progress = dict(upload_progress)
+    if progress.get("active"):
+        progress["waiting_s"] = round(rate_limit_wait_remaining())
+    return progress
 
 @app.post("/api/query", response_model=QueryResponse)
 def query_documents(request: QueryRequest):

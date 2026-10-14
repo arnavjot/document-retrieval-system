@@ -28,6 +28,14 @@ EMBED_BATCH = 90
 EMBED_ATTEMPTS = 4
 
 
+# When the current rate-limit wait ends, so the upload progress can show it.
+_wait_until = 0.0
+
+
+def rate_limit_wait_remaining() -> float:
+    return max(0.0, _wait_until - time.time())
+
+
 def _retry_after(error: Exception) -> float:
     match = re.search(r"retry in ([0-9.]+)s", str(error)) or re.search(r"seconds: (\d+)", str(error))
     return min(float(match.group(1)) + 1 if match else 60.0, 65.0)
@@ -54,6 +62,8 @@ class GeminiEmbeddings(GoogleGenerativeAIEmbeddings):
                 if attempt == EMBED_ATTEMPTS - 1:
                     raise
                 delay = _retry_after(e)
+                global _wait_until
+                _wait_until = time.time() + delay
                 logger.warning(f"Gemini embedding quota hit; retrying in {delay:.0f}s")
                 time.sleep(delay)
 

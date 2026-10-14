@@ -13,3 +13,5 @@ export default async function api(path, options) {
   });
   return data;
 }
+
+export { BASE_URL };

@@ -2,7 +2,7 @@ import logging
 import re
 import math
 import statistics
-from typing import List, Any
+from typing import Any, Callable, List, Optional
 
 from pypdf import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -107,12 +107,21 @@ class DocumentProcessor:
         # (see chunking_embeddings); otherwise with the index's own model.
         self.text_splitter = SemanticChunker(chunking_embeddings(embeddings))
 
-    def process_pdf(self, file_path: str) -> List[Document]:
-        """Process a PDF file and return semantically-chunked document pieces."""
+    def process_pdf(self, file_path: str,
+                    on_page: Optional[Callable[[int, int], None]] = None) -> List[Document]:
+        """Process a PDF file and return semantically-chunked document pieces.
+
+        on_page(done, total) is called after each page is chunked, for progress.
+        """
         # The caller stamps each chunk's "source" when it indexes them.
         documents = [
             Document(page_content=text, metadata={"page": page_num})
             for page_num, page in enumerate(PdfReader(file_path).pages, 1)
             if (text := page.extract_text()) and text.strip()
         ]
-        return self.text_splitter.split_documents(documents)
+        chunks: List[Document] = []
+        for done, doc in enumerate(documents, 1):
+            chunks.extend(self.text_splitter.split_documents([doc]))
+            if on_page:
+                on_page(done, len(documents))
+        return chunks

@@ -1,12 +1,68 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Upload, Trash2, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
-import api from '../services/api';
+import api, { BASE_URL } from '../services/api';
+
+// Sent with XMLHttpRequest, not fetch: only XHR reports upload progress.
+function sendFile(formData, onSent) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${BASE_URL}/api/upload`);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onSent(e.loaded / e.total); };
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(Object.assign(new Error(`HTTP ${xhr.status}`), {
+        detail: typeof data.detail === 'string' ? data.detail : undefined
+      }));
+    };
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.send(formData);
+  });
+}
+
+// Sending is the first 10%, chunking pages the next 40%, indexing chunks the rest.
+function describe(sent, server) {
+  if (sent < 1 || !server?.active) {
+    return { pct: Math.round(sent * 10), label: sent < 1 ? 'Uploading the file' : 'Reading the PDF' };
+  }
+  const { stage, done = 0, total = 0, waiting_s: wait = 0 } = server;
+  const part = total ? done / total : 0;
+  if (stage === 'chunking') {
+    return { pct: Math.round(10 + 40 * part), label: `Splitting page ${done} of ${total} into chunks` };
+  }
+  if (stage === 'indexing') {
+    return {
+      pct: Math.round(50 + 50 * part),
+      label: `Indexing ${done} of ${total} chunks with Gemini`,
+      wait
+    };
+  }
+  return { pct: 10, label: 'Reading the PDF' };
+}
 
 function DocumentUpload({ onUploadSuccess, documents, onDeleteSuccess }) {
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [deletingFile, setDeletingFile] = useState(null);
+  const [sent, setSent] = useState(0);
+  const [server, setServer] = useState(null);
+
+  // While the server works on the upload, poll what stage it has reached.
+  useEffect(() => {
+    if (!uploading || sent < 1) return undefined;
+    let stop = false;
+    const poll = async () => {
+      try {
+        const p = await api('/api/upload/progress');
+        if (!stop) setServer(p);
+      } catch { /* keep the last known state */ }
+    };
+    poll();
+    const id = setInterval(poll, 800);
+    return () => { stop = true; clearInterval(id); };
+  }, [uploading, sent]);
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -35,12 +91,14 @@ function DocumentUpload({ onUploadSuccess, documents, onDeleteSuccess }) {
 
     setUploading(true);
     setUploadStatus(null);
+    setSent(0);
+    setServer(null);
 
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-      const data = await api('/api/upload', { method: 'POST', body: formData });
+      const data = await sendFile(formData, setSent);
       setUploadStatus({
         type: 'success',
         message: `"${file.name}" uploaded — ${data.chunks} chunks indexed`
@@ -53,8 +111,11 @@ function DocumentUpload({ onUploadSuccess, documents, onDeleteSuccess }) {
       });
     } finally {
       setUploading(false);
+      setServer(null);
     }
   };
+
+  const progress = uploading ? describe(sent, server) : null;
 
   const handleDelete = async (filename) => {
     if (!window.confirm(`Delete "${filename}"?`)) return;
@@ -106,6 +167,23 @@ function DocumentUpload({ onUploadSuccess, documents, onDeleteSuccess }) {
           <input type="file" accept=".pdf" onChange={handleFileInput} disabled={uploading} hidden />
         </label>
       </div>
+
+      {progress && (
+        <div className={`upbar ${progress.wait ? 'waiting' : ''}`} role="status" aria-live="polite">
+          <div className="upbar-top">
+            <span>{progress.label}</span>
+            <span className="pct">{progress.pct}%</span>
+          </div>
+          <div className="upbar-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.pct}>
+            <span style={{ width: `${progress.pct}%` }} />
+          </div>
+          <small>
+            {progress.wait
+              ? `Gemini's free tier allows 100 embeddings a minute. Waiting ${progress.wait}s, then it carries on by itself.`
+              : 'Large PDFs take a minute or two: every chunk is embedded with Gemini.'}
+          </small>
+        </div>
+      )}
 
       {uploadStatus && (
         <div className={`notice ${uploadStatus.type === 'success' ? 'ok' : 'err'}`} style={{ marginTop: '14px' }} role="status">

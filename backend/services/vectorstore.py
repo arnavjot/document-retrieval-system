@@ -1,13 +1,13 @@
 import os
 import re
-from typing import List, Set
+from typing import Callable, List, Optional, Set
 
 # Chroma's anonymized telemetry is off unless the environment turns it on.
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 from langchain_community.vectorstores import Chroma
 from langchain.schema import Document
-from services.embeddings import load_embeddings
+from services.embeddings import EMBED_BATCH, load_embeddings
 
 class VectorStoreService:
     def __init__(self):
@@ -22,15 +22,29 @@ class VectorStoreService:
             collection_name=f"documents-{name}"
         )
     
-    def add_documents(self, documents: List[Document], source: str) -> None:
-        """Index a document's chunks, replacing any previously indexed version"""
+    def add_documents(self, documents: List[Document], source: str,
+                      on_progress: Optional[Callable[[int, int], None]] = None) -> None:
+        """Index a document's chunks, replacing any previously indexed version.
+
+        Chunks are embedded in batches so on_progress(done, total) can report
+        progress; if any batch fails, the batches already added are removed.
+        """
         for doc in documents:
             doc.metadata["source"] = source
 
         # Old chunks go only after the new ones are in, so a failed
         # re-index leaves the previous version searchable.
         old_ids = self.vectorstore.get(where={"source": source})["ids"]
-        self.vectorstore.add_documents(documents)
+        added: List[str] = []
+        try:
+            for i in range(0, len(documents), EMBED_BATCH):
+                added += self.vectorstore.add_documents(documents[i:i + EMBED_BATCH])
+                if on_progress:
+                    on_progress(min(i + EMBED_BATCH, len(documents)), len(documents))
+        except Exception:
+            if added:
+                self.vectorstore.delete(ids=added)
+            raise
         if old_ids:
             self.vectorstore.delete(ids=old_ids)
         self.vectorstore.persist()

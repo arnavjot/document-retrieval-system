@@ -99,6 +99,14 @@ button { font: inherit; color: inherit; }
 /* documents */
 .drop { margin-top: 20px; border: 2px dashed var(--mint); background: var(--mint-soft); border-radius: 18px; padding: 34px 20px; text-align: center; transition: border-color .15s; }
 .drop.active { border-color: var(--teal); }
+.upbar { margin-top: 14px; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: grid; gap: 8px; }
+.upbar-top { display: flex; justify-content: space-between; gap: 12px; font-weight: 600; font-size: 14px; }
+.upbar-top .pct { color: var(--teal); font-variant-numeric: tabular-nums; }
+.upbar-track { height: 8px; border-radius: 99px; background: var(--mint-soft); overflow: hidden; }
+.upbar-track span { display: block; height: 100%; background: var(--teal); border-radius: 99px; transition: width .4s ease; }
+.upbar.waiting .upbar-track span { background: var(--amber); }
+.upbar small { color: var(--muted); font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .upbar-track span { transition: none; } }
 .drop b { font-size: 17px; } .drop p { margin: 6px 0 14px; color: var(--muted); }
 .table { margin: 18px 0 32px; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
 .tr { display: grid; grid-template-columns: 34px minmax(0, 1fr) 90px 130px 84px; gap: 12px; align-items: center; padding: 12px 18px; border-top: 1px solid var(--line); }
