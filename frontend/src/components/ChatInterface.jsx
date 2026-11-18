@@ -1,9 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, FileText, FileSearch, MessageSquare, Zap, Download, Trash2, Upload } from 'lucide-react';
+import { Send, Loader2, FileText, FileSearch, MessageSquare, Zap, Download, Trash2, Upload, Plus, CheckCircle, AlertCircle, X } from 'lucide-react';
 import MessageBubble from './MessageBubble';
+import UploadProgress from './UploadProgress';
 import api from '../services/api';
+import { addFiles, setUploadStatus, useUploadQueue } from '../services/uploadQueue';
 
-function ChatInterface({ documents }) {
+function ChatInterface({ documents, onGoToDocuments }) {
+  const q = useUploadQueue();
+  const fileInputRef = useRef(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -101,7 +105,9 @@ function ChatInterface({ documents }) {
         {noDocWarning && (
           <div className="notice warn" style={{ marginTop: '16px' }} role="alert">
             <FileText size={16} />
-            No documents uploaded yet. Go to the Documents tab to upload a PDF first.
+            No documents uploaded yet.{' '}
+            <button type="button" className="link-btn" onClick={onGoToDocuments}>Go to Documents</button>{' '}
+            to upload a PDF first.
           </div>
         )}
 
@@ -112,8 +118,10 @@ function ChatInterface({ documents }) {
               <h2>Ask your documents</h2>
               <p>Powered by Gemini Flash-Lite. Upload a PDF and ask anything about its contents.</p>
               <div className="tiles">
+                <button type="button" className="tile tile-link" onClick={onGoToDocuments}>
+                  <span className="tile-icon"><Upload size={18} /></span>Upload PDFs
+                </button>
                 {[
-                  { icon: <Upload size={18} />, text: 'Upload PDFs' },
                   { icon: <Zap size={18} />, text: 'Instant answers' },
                   { icon: <MessageSquare size={18} />, text: 'Follow-up questions' }
                 ].map((item, i) => (
@@ -132,7 +140,33 @@ function ChatInterface({ documents }) {
           </div>
         )}
 
+        <UploadProgress q={q} compact />
+        {!q.running && q.status && (
+          <div className={`notice ${q.status.type === 'success' ? 'ok' : 'err'} chat-upload-status`} role="status">
+            {q.status.type === 'success' ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
+            <span>{q.status.message}</span>
+            <button type="button" className="icon-btn" onClick={() => setUploadStatus(null)} aria-label="Dismiss"><X size={14} /></button>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="composer">
+          <button
+            type="button"
+            className="composer-add"
+            onClick={() => fileInputRef.current?.click()}
+            title="Upload PDFs"
+            aria-label="Upload PDFs"
+          >
+            <Plus size={18} />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf"
+            multiple
+            hidden
+            onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }}
+          />
           <input
             type="text"
             value={input}

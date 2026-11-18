@@ -1,68 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Upload, Trash2, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
-import api, { BASE_URL } from '../services/api';
+import api from '../services/api';
+import { addFiles, setUploadStatus, useUploadQueue } from '../services/uploadQueue';
+import UploadProgress from './UploadProgress';
 
-// Sent with XMLHttpRequest, not fetch: only XHR reports upload progress.
-function sendFile(formData, onSent) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${BASE_URL}/api/upload`);
-    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onSent(e.loaded / e.total); };
-    xhr.onload = () => {
-      let data = {};
-      try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
-      else reject(Object.assign(new Error(`HTTP ${xhr.status}`), {
-        detail: typeof data.detail === 'string' ? data.detail : undefined
-      }));
-    };
-    xhr.onerror = () => reject(new Error('Network error'));
-    xhr.send(formData);
-  });
-}
-
-// Sending is the first 10%, chunking pages the next 40%, indexing chunks the rest.
-function describe(sent, server) {
-  if (sent < 1 || !server?.active) {
-    return { pct: Math.round(sent * 10), label: sent < 1 ? 'Uploading the file' : 'Reading the PDF' };
-  }
-  const { stage, done = 0, total = 0, waiting_s: wait = 0 } = server;
-  const part = total ? done / total : 0;
-  if (stage === 'chunking') {
-    return { pct: Math.round(10 + 40 * part), label: `Splitting page ${done} of ${total} into chunks` };
-  }
-  if (stage === 'indexing') {
-    return {
-      pct: Math.round(50 + 50 * part),
-      label: `Indexing ${done} of ${total} chunks with Gemini`,
-      wait
-    };
-  }
-  return { pct: 10, label: 'Reading the PDF' };
-}
-
-function DocumentUpload({ onUploadSuccess, documents, onDeleteSuccess }) {
-  const [uploading, setUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState(null);
+function DocumentUpload({ documents, onDeleteSuccess }) {
+  const q = useUploadQueue();
   const [dragActive, setDragActive] = useState(false);
   const [deletingFile, setDeletingFile] = useState(null);
-  const [sent, setSent] = useState(0);
-  const [server, setServer] = useState(null);
-
-  // While the server works on the upload, poll what stage it has reached.
-  useEffect(() => {
-    if (!uploading || sent < 1) return undefined;
-    let stop = false;
-    const poll = async () => {
-      try {
-        const p = await api('/api/upload/progress');
-        if (!stop) setServer(p);
-      } catch { /* keep the last known state */ }
-    };
-    poll();
-    const id = setInterval(poll, 800);
-    return () => { stop = true; clearInterval(id); };
-  }, [uploading, sent]);
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -75,47 +20,15 @@ function DocumentUpload({ onUploadSuccess, documents, onDeleteSuccess }) {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    if (e.dataTransfer.files?.[0]) handleUpload(e.dataTransfer.files[0]);
+    addFiles(e.dataTransfer.files);
   };
 
   const handleFileInput = (e) => {
-    if (e.target.files?.[0]) handleUpload(e.target.files[0]);
+    addFiles(e.target.files);
     e.target.value = '';
   };
 
-  const handleUpload = async (file) => {
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      setUploadStatus({ type: 'error', message: 'Only PDF files are allowed.' });
-      return;
-    }
-
-    setUploading(true);
-    setUploadStatus(null);
-    setSent(0);
-    setServer(null);
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const data = await sendFile(formData, setSent);
-      setUploadStatus({
-        type: 'success',
-        message: `"${file.name}" uploaded — ${data.chunks} chunks indexed`
-      });
-      onUploadSuccess();
-    } catch (error) {
-      setUploadStatus({
-        type: 'error',
-        message: error.detail || 'Upload failed. Please try again.'
-      });
-    } finally {
-      setUploading(false);
-      setServer(null);
-    }
-  };
-
-  const progress = uploading ? describe(sent, server) : null;
+  const uploading = q.running;
 
   const handleDelete = async (filename) => {
     if (!window.confirm(`Delete "${filename}"?`)) return;
@@ -159,36 +72,21 @@ function DocumentUpload({ onUploadSuccess, documents, onDeleteSuccess }) {
         onDragOver={handleDrag}
         onDrop={handleDrop}
       >
-        <b>{uploading ? 'Uploading and indexing…' : 'Drop a PDF here'}</b>
-        <p>or choose a file. It is split into chunks and indexed so you can ask about it.</p>
+        <b>{uploading ? `Uploading and indexing ${q.current}…` : 'Drop PDFs here'}</b>
+        <p>or choose files. Each is split into chunks and indexed so you can ask about it.</p>
         <label className="btn-primary" style={{ display: 'inline-flex' }}>
           {uploading ? <Loader2 size={15} className="spin" /> : <Upload size={15} />}
-          {uploading ? 'Processing…' : 'Choose file'}
-          <input type="file" accept=".pdf" onChange={handleFileInput} disabled={uploading} hidden />
+          {uploading ? 'Add more to the queue' : 'Choose files'}
+          <input type="file" accept=".pdf" multiple onChange={handleFileInput} hidden />
         </label>
       </div>
 
-      {progress && (
-        <div className={`upbar ${progress.wait ? 'waiting' : ''}`} role="status" aria-live="polite">
-          <div className="upbar-top">
-            <span>{progress.label}</span>
-            <span className="pct">{progress.pct}%</span>
-          </div>
-          <div className="upbar-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.pct}>
-            <span style={{ width: `${progress.pct}%` }} />
-          </div>
-          <small>
-            {progress.wait
-              ? `Gemini's free tier allows 100 embeddings a minute. Waiting ${progress.wait}s, then it carries on by itself.`
-              : 'Large PDFs take a minute or two: every chunk is embedded with Gemini.'}
-          </small>
-        </div>
-      )}
+      <UploadProgress q={q} />
 
-      {uploadStatus && (
-        <div className={`notice ${uploadStatus.type === 'success' ? 'ok' : 'err'}`} style={{ marginTop: '14px' }} role="status">
-          {uploadStatus.type === 'success' ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
-          {uploadStatus.message}
+      {q.status && (
+        <div className={`notice ${q.status.type === 'success' ? 'ok' : 'err'}`} style={{ marginTop: '14px' }} role="status">
+          {q.status.type === 'success' ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
+          {q.status.message}
         </div>
       )}
 

@@ -353,3 +353,27 @@ def test_failed_indexing_removes_the_batches_already_added(monkeypatch):
         service.add_documents([Document(page_content=t) for t in "abc"], "x.pdf", on_progress=lambda d, t: seen.append((d, t)))
     assert seen == [(1, 3)]
     assert fake.deleted == ["id1"]
+
+
+def test_background_upload_returns_at_once_and_reports_the_result():
+    """wait=false answers 202 as soon as the file is saved; the result arrives
+    through the progress endpoint, so no request outlasts a proxy timeout."""
+    import time
+    response = client.post("/api/upload?wait=false", files={"file": ("background.pdf", make_pdf("Indexed in the background."), "application/pdf")})
+    assert response.status_code == 202
+    assert response.json()["status"] == "processing"
+    deadline = time.time() + 60
+    while (progress := client.get("/api/upload/progress").json())["active"] and time.time() < deadline:
+        time.sleep(0.2)
+    assert progress["filename"] == "background.pdf"
+    assert progress["state"] == "done" and progress["chunks"] >= 1
+    assert "background.pdf" in listed_documents()
+
+
+def test_background_upload_is_refused_while_another_is_indexing():
+    assert app_module.index_lock.acquire(blocking=False)
+    try:
+        response = client.post("/api/upload?wait=false", files={"file": ("busy.pdf", make_pdf("Busy."), "application/pdf")})
+        assert response.status_code == 409
+    finally:
+        app_module.index_lock.release()

@@ -4,6 +4,7 @@ import ChatInterface from './components/ChatInterface';
 import DocumentUpload from './components/DocumentUpload';
 import SecurityDashboard from './components/SecurityDashboard';
 import api from './services/api';
+import { setOnIndexed } from './services/uploadQueue';
 
 function App() {
   const [activeTab, setActiveTab] = useState('chat');
@@ -42,6 +43,10 @@ function App() {
     loadDocuments();
     loadStats();
   };
+
+  // Uploads can start from the Documents tab or the chat's + button; either
+  // way the document list refreshes when each file finishes.
+  useEffect(() => { setOnIndexed(handleDocumentUpload); });
 
   const tabs = [
     { id: 'chat', label: 'Chat' },
@@ -82,11 +87,10 @@ function App() {
       </header>
 
       <main className="content">
-        {activeTab === 'chat' && <ChatInterface documents={documents} />}
+        {activeTab === 'chat' && <ChatInterface documents={documents} onGoToDocuments={() => setActiveTab('upload')} />}
         {activeTab === 'security' && <SecurityDashboard stats={stats} />}
         {activeTab === 'upload' && (
           <DocumentUpload
-            onUploadSuccess={handleDocumentUpload}
             documents={documents}
             onDeleteSuccess={handleDocumentUpload}
           />

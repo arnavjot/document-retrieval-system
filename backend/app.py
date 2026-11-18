@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
 from collections import deque
@@ -152,9 +153,51 @@ def log_security_incident(query: str, flags: List[str], pii_found: bool):
 async def root():
     return {"message": "Document Retrieval System API", "status": "running"}
 
+def _index_upload(partial: Path, resolved: Path, safe_name: str) -> int:
+    """Chunk and index a staged upload, reporting progress; returns the chunk count.
+
+    Runs with index_lock held. The PDF is moved into place only once it is
+    indexed: one that fails to parse never shows up as uploaded, and a failed
+    re-upload leaves the previous version intact.
+    """
+    try:
+        documents = document_processor.process_pdf(
+            str(partial),
+            on_page=lambda done, total: upload_progress.update(stage="chunking", done=done, total=total))
+        upload_progress.update(stage="indexing", done=0, total=len(documents))
+        vectorstore_service.add_documents(
+            documents, safe_name,
+            on_progress=lambda done, total: upload_progress.update(done=done, total=total))
+        os.replace(partial, resolved)
+        upload_progress.update(state="done", chunks=len(documents))
+        return len(documents)
+    except Exception as e:
+        upload_progress.update(state="failed", error=f"Error processing document: {e}")
+        raise
+    finally:
+        partial.unlink(missing_ok=True)
+        upload_progress["active"] = False
+
+
+def _index_in_background(partial: Path, resolved: Path, safe_name: str) -> None:
+    try:
+        _index_upload(partial, resolved, safe_name)
+    except Exception:
+        logger.exception("Background indexing of %s failed", safe_name)
+    finally:
+        index_lock.release()  # acquired by the request that started this thread
+
+
 @app.post("/api/upload")
-def upload_document(file: UploadFile = File(...)):
-    """Upload and process a PDF document"""
+def upload_document(file: UploadFile = File(...), wait: bool = Query(True)):
+    """Upload and process a PDF document.
+
+    wait=false returns 202 as soon as the file is saved and indexes it in the
+    background; poll /api/upload/progress for the result. Indexing a long PDF on
+    Gemini's free tier can take minutes, longer than proxies (such as Codespaces
+    port forwarding) keep a request open. wait=true (the default, for scripts)
+    returns only when the PDF is indexed.
+    """
     try:
         if not file.filename or not file.filename.lower().endswith(".pdf"):
             raise HTTPException(status_code=400, detail="Only PDF files are allowed")
@@ -167,35 +210,41 @@ def upload_document(file: UploadFile = File(...)):
         # Never write to a client-controlled path.
         resolved = resolve_document_path(file.filename)
         safe_name = resolved.name
-        # Stage under a name the document list ignores, and only move it into
-        # place once it is indexed: a PDF that fails to parse never shows up as
-        # uploaded, and a failed re-upload leaves the previous version intact.
+        # Staged under a name the document list ignores until it is indexed.
         partial = resolved.with_name(safe_name + ".part")
-        with index_lock:
-            upload_progress.clear()
-            upload_progress.update(active=True, filename=safe_name, stage="reading", done=0, total=0)
-            try:
-                with open(partial, "wb") as buffer:
-                    shutil.copyfileobj(file.file, buffer)
-                documents = document_processor.process_pdf(
-                    str(partial),
-                    on_page=lambda done, total: upload_progress.update(stage="chunking", done=done, total=total))
-                upload_progress.update(stage="indexing", done=0, total=len(documents))
-                vectorstore_service.add_documents(
-                    documents, safe_name,
-                    on_progress=lambda done, total: upload_progress.update(done=done, total=total))
-                os.replace(partial, resolved)
-            finally:
-                partial.unlink(missing_ok=True)
-                upload_progress["active"] = False
 
+        if not index_lock.acquire(blocking=wait):
+            raise HTTPException(status_code=409, detail="Another PDF is still being indexed. Try again when it finishes.")
+        try:
+            upload_progress.clear()
+            upload_progress.update(active=True, filename=safe_name, stage="reading", done=0, total=0, state="running")
+            with open(partial, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+        except Exception:
+            partial.unlink(missing_ok=True)
+            upload_progress["active"] = False
+            index_lock.release()
+            raise
+
+        if not wait:
+            threading.Thread(target=_index_in_background, args=(partial, resolved, safe_name), daemon=True).start()
+            return JSONResponse(status_code=202, content={
+                "message": "Upload received; indexing in the background",
+                "filename": safe_name,
+                "status": "processing"
+            })
+
+        try:
+            chunks = _index_upload(partial, resolved, safe_name)
+        finally:
+            index_lock.release()
         return {
             "message": "Document uploaded and processed successfully",
             "filename": safe_name,
-            "chunks": len(documents),
+            "chunks": chunks,
             "status": "success"
         }
-    
+
     except HTTPException:
         raise
     except Exception as e:
