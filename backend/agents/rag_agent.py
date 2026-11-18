@@ -5,7 +5,7 @@ from langchain.schema import AIMessage, HumanMessage
 from typing import List, Dict, Optional
 import logging
 import os
-from google.api_core.exceptions import ResourceExhausted
+from google.api_core.exceptions import TooManyRequests  # REST 429s; ResourceExhausted (gRPC) is a subclass
 from tenacity import retry, stop_after_attempt, retry_if_exception_type, wait_exponential
 import google.api_core.exceptions as _gexc
 import langchain_google_genai.chat_models as _gcm
@@ -78,7 +78,7 @@ class RAGAgent:
             ]
             return {"answer": result["answer"], "sources": sources}
         
-        except ResourceExhausted as e:
+        except TooManyRequests as e:
             # Google's message names the quota that ran out (per minute or per day).
             logger.warning(f"Gemini quota exhausted: {e}")
             return {

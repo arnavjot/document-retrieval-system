@@ -274,13 +274,14 @@ def test_gemini_embeddings_batch_and_wait_out_rate_limits(monkeypatch):
     """The free tier allows 100 embedding requests a minute: batches stay under
     it, and a 429 waits the delay Google names, then retries."""
     import google.generativeai as genai
-    from google.api_core.exceptions import ResourceExhausted
+    from google.api_core.exceptions import from_http_status
     import services.embeddings as emb
     calls, sleeps = [], []
     def fake_embed(**kw):
         calls.append(len(kw["content"]))
         if len(calls) == 2:
-            raise ResourceExhausted("Quota exceeded. Please retry in 12.5s.")
+            # What the REST transport raises for a 429 (TooManyRequests, not ResourceExhausted).
+            raise from_http_status(429, "Quota exceeded. Please retry in 12.5s.")
         return {"embedding": [[0.1]] * len(kw["content"])}
     monkeypatch.setattr(genai, "embed_content", fake_embed)
     monkeypatch.setattr(emb.time, "sleep", sleeps.append)

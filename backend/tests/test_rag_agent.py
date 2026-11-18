@@ -32,3 +32,14 @@ def test_failures_reach_the_server_log(rag_agent, caplog):
     rag_agent.chain = broken_chain
     assert "upstream down" in rag_agent.query("q")["answer"]
     assert "Query failed" in caplog.text
+
+
+def test_quota_errors_get_a_friendly_answer(rag_agent):
+    """Over REST a Gemini 429 is TooManyRequests (ResourceExhausted is only the
+    gRPC form); both must give the 'wait a minute' answer, not a raw error."""
+    from google.api_core.exceptions import ResourceExhausted, from_http_status
+    for error in (from_http_status(429, "quota"), ResourceExhausted("quota")):
+        def limited(inputs, error=error):
+            raise error
+        rag_agent.chain = limited
+        assert "rate limit" in rag_agent.query("q")["answer"]

@@ -6,7 +6,9 @@ never hold both. The model is picked at startup and never switched at runtime;
 VectorStoreService keeps a separate Chroma collection per model.
 """
 import google.generativeai as genai
-from google.api_core.exceptions import ResourceExhausted
+# A 429 is TooManyRequests over REST and its subclass ResourceExhausted over
+# gRPC; catching the parent handles both transports.
+from google.api_core.exceptions import TooManyRequests
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from typing import Any, List, Optional, Tuple
 import logging
@@ -58,7 +60,7 @@ class GeminiEmbeddings(GoogleGenerativeAIEmbeddings):
         for attempt in range(EMBED_ATTEMPTS):
             try:
                 return genai.embed_content(model=self.model, content=content, task_type=task_type)["embedding"]
-            except ResourceExhausted as e:
+            except TooManyRequests as e:
                 if attempt == EMBED_ATTEMPTS - 1:
                     raise
                 delay = _retry_after(e)
