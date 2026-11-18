@@ -1,6 +1,5 @@
-// The browser calls the backend directly (CORS allows :5173), which works the
-// same for local runs and docker-compose, where 8000 is published on the host.
-const BASE_URL = 'http://localhost:8000';
+// Same-origin: the Vite dev server proxies /api to the backend (see vite.config.js).
+const BASE_URL = '';
 
 // fetch() that resolves to the parsed JSON body and rejects on non-2xx, with
 // the backend's FastAPI `detail` message on `error.detail` when there is one
