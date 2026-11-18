@@ -24,7 +24,7 @@ _gcm._create_retry_decorator = _patched_retry_decorator
 
 from services.vectorstore import VectorStoreService
 from services.embeddings import GEMINI_TRANSPORT
-from agents.prompt_templates import RAG_PROMPT_TEMPLATE, CONDENSE_QUESTION_TEMPLATE
+from agents.prompt_templates import RAG_PROMPT_TEMPLATE, CONDENSE_QUESTION_TEMPLATE, DOCUMENT_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,10 @@ class RAGAgent:
         self.chain = ConversationalRetrievalChain.from_llm(
             llm=self.llm,
             retriever=self.retriever,
-            combine_docs_chain_kwargs={"prompt": PromptTemplate.from_template(RAG_PROMPT_TEMPLATE)},
+            combine_docs_chain_kwargs={
+                "prompt": PromptTemplate.from_template(RAG_PROMPT_TEMPLATE),
+                "document_prompt": PromptTemplate.from_template(DOCUMENT_TEMPLATE),
+            },
             condense_question_prompt=PromptTemplate.from_template(CONDENSE_QUESTION_TEMPLATE),
             return_source_documents=True
         )

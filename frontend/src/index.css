@@ -75,7 +75,10 @@ button { font: inherit; color: inherit; }
 .q { align-self: flex-end; max-width: 78%; background: var(--teal); color: var(--on); border-radius: 18px 18px 6px 18px; padding: 11px 16px; font-weight: 500; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ans { background: var(--paper); border: 1px solid var(--line); border-radius: 6px 18px 18px 18px; padding: 18px 20px; display: grid; gap: 12px; }
 .ans.error { background: var(--red-soft); border-color: var(--red); color: var(--red); }
-.ans-text { font-family: var(--font-read); font-size: 18px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ans-text { font-family: var(--font-read); font-size: 18px; line-height: 1.6; overflow-wrap: anywhere; }
+.ans-text p { margin: 0 0 12px; } .ans-text p:last-child, .ans-text ul:last-child { margin-bottom: 0; }
+.ans-text ul { margin: 0 0 12px; padding-left: 1.3em; } .ans-text li + li { margin-top: 4px; }
+.ans-text strong { font-weight: 600; }
 .ans.error .ans-text { font-family: var(--font-ui); font-size: 14px; }
 .warn-pill { justify-self: start; font-size: 12px; font-weight: 600; color: var(--amber); background: var(--amber-soft); border-radius: 999px; padding: 3px 10px; }
 .ans-meta { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 10px; }
@@ -150,3 +153,4 @@ button { font: inherit; color: inherit; }
 .flag { font-size: 11px; font-weight: 700; border-radius: 6px; padding: 2px 7px; display: inline-block; margin: 2px 4px 2px 0; background: var(--amber-soft); color: var(--amber); }
 .flag.inj { background: var(--red-soft); color: var(--red); }
 @media (max-width: 860px) { .er { grid-template-columns: minmax(0, 1fr) auto; } .er .t, .er .pii, .er.h .t, .er.h .pii { display: none; } }
+.ans-text .math-block { display: block; margin: 8px 0; overflow-x: auto; } .ans-text .katex { font-size: 1.05em; }
